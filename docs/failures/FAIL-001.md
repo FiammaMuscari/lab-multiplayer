@@ -35,3 +35,35 @@ or resume tokens are stored here.
 Related reference behavior: `web/ui/src/lib/relay/websocket-peer.js` handles
 peer lifecycle and host advertisement; `web/ui/src/lib/relay/resync.js`
 defines cursor/prefix recovery. This evidence does not establish root cause.
+
+## Root cause evidence
+
+The fork's relay match uses the creating peer as the host authority. This is
+the mechanism demonstrated by the source inspection:
+
+- `web/ui/src/hooks/peer-lobby/trusted-sequencer.js`,
+  `acceptTrustedCommand`: only a session whose `role` is `host` allocates the
+  next sequence and applies a trusted command. A client submits through
+  `hostConnectionRef.current`; a missing connection cannot reach this path.
+- `web/ui/src/hooks/peer-lobby/messaging.js`, `handleHostConnectionLost`:
+  heartbeat loss clears `hostConnectionRef.current`, marks the host player
+  disconnected, then attempts host promotion or schedules a reconnect.
+- The same file, `promoteLocalPlayerToHost`: immediately returns `false` for a
+  relay lobby (`isRelayId(lobbyId)`). Therefore a relay guest is not elected as
+  a replacement authority when the original host disappears.
+- `web/ui/src/hooks/peer-lobby/messaging.js`, `requestResync`: a client sends
+  `resync_request` only when `hostConnectionRef.current` exists and is open.
+  After host loss that precondition is false, so recovery cannot start through
+  the lost host connection.
+- `web/ui/src/lib/relay/websocket-peer.js`: an `offline` relay event closes
+  connections whose peer is the offline id; a WebSocket close also closes all
+  logical connections and marks the peer disconnected. `RelayConnection.send`
+  rejects while closed.
+
+The causal chain is therefore: the host peer disappears; relay lifecycle
+closes the guest's logical host connection; the guest retains its session but
+has no open authority connection; relay sessions explicitly skip host
+promotion; trusted command acceptance and host-directed resync have no
+alternate endpoint. `host_unavailable` is the resulting symptom, not the
+cause. This explains the observed sequence remaining at 2 without asserting
+that the lab's baseline policy is a complete port of the game engine.
