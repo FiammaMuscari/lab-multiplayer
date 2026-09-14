@@ -181,6 +181,20 @@ func HashEvent(event protocol.Event) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// HashPrefix mirrors IronSmith's transcript continuity check. It hashes only
+// command metadata; Go never interprets the game state or command payload.
+func HashPrefix(previous string, event protocol.Event) string {
+	canonical := struct {
+		Previous   string          `json:"previous"`
+		Seq        uint64          `json:"seq"`
+		ActorIndex int             `json:"actorIndex"`
+		Command    json.RawMessage `json:"command,omitempty"`
+	}{previous, event.Seq, event.ActorIndex, event.Payload}
+	data, _ := json.Marshal(canonical)
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
 func ValidateID(value string) bool {
 	if len(value) < 8 || len(value) > 64 {
 		return false

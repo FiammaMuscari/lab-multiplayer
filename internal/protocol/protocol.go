@@ -15,16 +15,21 @@ type Credentials struct {
 }
 
 type Action struct {
-	ActionID    string          `json:"actionId"`
-	ExpectedSeq uint64          `json:"expectedSeq"`
+	ActionID    string          `json:"actionId,omitempty"` // legacy alias
+	CommandID   string          `json:"commandId,omitempty"`
+	ExpectedSeq uint64          `json:"expectedSeq,omitempty"` // lab cursor
+	ClientSeq   uint64          `json:"seq,omitempty"`         // advisory client value
 	ActorIndex  int             `json:"actorIndex"`
-	Kind        string          `json:"kind"`
-	Payload     json.RawMessage `json:"payload,omitempty"`
+	Kind        string          `json:"kind,omitempty"`
+	Payload     json.RawMessage `json:"payload,omitempty"` // legacy alias
+	Command     json.RawMessage `json:"command,omitempty"`
+	PrefixHash  string          `json:"prefixHash,omitempty"`
 }
 
 type Event struct {
 	Seq        uint64          `json:"seq"`
 	ActionID   string          `json:"actionId"`
+	CommandID  string          `json:"commandId,omitempty"`
 	PlayerID   string          `json:"playerId"`
 	ActorIndex int             `json:"actorIndex"`
 	Kind       string          `json:"kind"`
@@ -32,6 +37,7 @@ type Event struct {
 	AcceptedAt time.Time       `json:"acceptedAt"`
 	PrevHash   string          `json:"prevHash"`
 	Hash       string          `json:"hash"`
+	PrefixHash string          `json:"prefixHash,omitempty"`
 }
 
 type ClientMessage struct {
@@ -53,6 +59,7 @@ type ServerMessage struct {
 	Events     []Event `json:"events,omitempty"`
 	Event      *Event  `json:"event,omitempty"`
 	Duplicate  bool    `json:"duplicate,omitempty"`
+	Divergence bool    `json:"divergence,omitempty"`
 	Code       string  `json:"code,omitempty"`
 	Message    string  `json:"message,omitempty"`
 }

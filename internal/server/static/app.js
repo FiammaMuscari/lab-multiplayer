@@ -3,6 +3,11 @@ const storageKey = "ironsmith-multiplayer-lab-session-v1";
 let credentials = readCredentials();
 let socket;
 let sequence = 0;
+let serverSequence = 0;
+let prefixHash = "";
+let reconnects = 0;
+let metrics = { duplicates: 0, conflicts: 0, divergences: 0 };
+let lastCommand = null;
 let reconnectAttempt = 0;
 let reconnectTimer;
 let manualClose = false;
@@ -29,6 +34,7 @@ function replaceCredentials(value) {
 function renderIdentity() {
   $("#room").textContent = credentials?.roomId || "—";
   $("#player").textContent = credentials?.playerId || "—";
+  $("#actor").textContent = credentials?.playerIndex ?? "—";
   $("#join-form [name=room]").value = credentials?.roomId || "";
 }
 
@@ -36,6 +42,8 @@ function setStatus(text, kind = "offline") {
   $("#status").textContent = text;
   $("#status-dot").className = `dot ${kind}`;
   $("#action").disabled = kind !== "online";
+  $("#burst").disabled = kind !== "online";
+  $("#duplicate").disabled = kind !== "online" || !lastCommand;
   $("#disconnect").disabled = !socket || socket.readyState > WebSocket.OPEN;
   $("#reconnect").disabled = !credentials || kind === "online" || kind === "connecting";
   $("#diagnostics").disabled = !credentials;
@@ -50,7 +58,13 @@ function log(text, error = false) {
 
 function updateSequence(value) {
   sequence = Number(value);
-  $("#sequence").textContent = `secuencia ${sequence}`;
+  $("#sequence").textContent = `${sequence} / ${serverSequence}`;
+}
+
+function renderMetrics() {
+  $("#prefix").textContent = prefixHash ? prefixHash.slice(0, 16) + "…" : "—";
+  $("#reconnects").textContent = reconnects;
+  $("#metrics").textContent = `${metrics.duplicates} / ${metrics.conflicts} / ${metrics.divergences}`;
 }
 
 async function post(url, body) {
@@ -73,19 +87,30 @@ function connect() {
     const message = JSON.parse(data);
     if (message.type === "error") { log(`${message.code}: ${message.message}`, true); return; }
     if (message.type === "resumed") {
+      serverSequence = Number(message.currentSeq || sequence); renderMetrics();
       for (const event of message.events || []) applyEvent(event);
       reconnectAttempt = 0;
       setStatus("Conectado", "online");
       log(`sesión reanudada; ${message.events?.length || 0} eventos recuperados`);
       return;
     }
-    if (message.type === "event" && message.event) applyEvent(message.event);
-    if (message.type === "action_ack" && message.duplicate) log(`retry confirmado en seq ${message.currentSeq}`);
+    if ((message.type === "event" || message.type === "apply_action") && message.event) applyEvent(message.event);
+    if (message.type === "trusted_command_ack" && message.duplicate) { metrics.duplicates++; renderMetrics(); log(`duplicate commandId confirmado en seq ${message.currentSeq}`); }
+    if (message.type === "state_resync") {
+      metrics.divergences += message.divergence ? 1 : 0; serverSequence = Number(message.currentSeq || 0);
+      sequence = 0; prefixHash = ""; for (const event of message.events || []) applyEvent(event);
+      renderMetrics(); log("state_resync aplicado por divergencia de prefixHash", true);
+    }
+    if (message.type === "error") {
+      if (message.code === "sequence_conflict") metrics.conflicts++;
+      renderMetrics();
+    }
   };
   ws.onclose = () => {
     if (socket !== ws) return;
     socket = null;
-    setStatus(manualClose ? "Desconectado manualmente" : "Conexión perdida", "offline");
+    if (!manualClose) reconnects++;
+    renderMetrics(); setStatus(manualClose ? "Desconectado manualmente" : "Conexión perdida", "offline");
     if (!manualClose) scheduleReconnect();
   };
   ws.onerror = () => log("error de transporte", true);
@@ -99,7 +124,8 @@ function applyEvent(event) {
     return;
   }
   updateSequence(event.seq);
-  log(`#${event.seq} ${event.kind} · ${event.playerId}`);
+  serverSequence = Math.max(serverSequence, Number(event.seq)); prefixHash = event.prefixHash || prefixHash; renderMetrics();
+  log(`#${event.seq} apply_action ${event.commandId || event.actionId} · actor ${event.actorIndex}`);
 }
 
 function scheduleReconnect() {
@@ -129,12 +155,17 @@ $("#join-form").addEventListener("submit", async event => {
   } catch (error) { log(error.message, true); }
 });
 
-$("#action").addEventListener("click", () => {
+function sendCommand(command = null) {
   if (socket?.readyState !== WebSocket.OPEN) return;
-  const actionId = `action-${crypto.randomUUID()}`;
-  socket.send(JSON.stringify({ type: "action", action: { actionId, expectedSeq: sequence, actorIndex: credentials.playerIndex, kind: "trusted_command", payload: { type: "priority_action", action_ref: { kind: "pass_priority" }, clientTime: new Date().toISOString() } } }));
-  log(`intent enviado desde seq ${sequence}`);
-});
+  const value = command || { type: "priority_action", action_ref: { kind: "pass_priority" }, clientTime: new Date().toISOString() };
+  const commandId = command ? lastCommand.commandId : `command-${crypto.randomUUID()}`;
+  lastCommand = { commandId, command: value };
+  socket.send(JSON.stringify({ type: "trusted_command", action: { commandId, seq: sequence, expectedSeq: sequence, actorIndex: credentials.playerIndex, kind: "trusted_command", command: value, prefixHash } }));
+  log(`trusted_command ${commandId} desde seq ${sequence}`); renderMetrics();
+}
+$("#action").addEventListener("click", () => sendCommand());
+$("#burst").addEventListener("click", async () => { for (let i = 0; i < 10; i++) { sendCommand(); await new Promise(r => setTimeout(r, 10)); } });
+$("#duplicate").addEventListener("click", () => sendCommand(lastCommand?.command));
 
 $("#disconnect").addEventListener("click", () => { manualClose = true; clearTimeout(reconnectTimer); socket?.close(1000, "manual test"); });
 $("#reconnect").addEventListener("click", () => { reconnectAttempt = 0; connect(); });
@@ -172,4 +203,5 @@ $("#diagnostics").addEventListener("click", async () => {
 
 renderIdentity();
 updateSequence(0);
+renderMetrics();
 if (credentials) connect();

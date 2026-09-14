@@ -32,11 +32,11 @@ func TestWebSocketResumeAndReplay(t *testing.T) {
 	if err := wsjson.Write(ctx, guestConn, action); err != nil {
 		t.Fatal(err)
 	}
-	event := readType(t, guestConn, "event")
+	event := readType(t, guestConn, "apply_action")
 	if event.Event == nil || event.Event.Seq != 1 {
 		t.Fatalf("bad event: %#v", event)
 	}
-	readType(t, hostConn, "event")
+	readType(t, hostConn, "apply_action")
 	guestConn.CloseNow()
 
 	// A resumed socket receives exactly the missing tail, while the creator's
@@ -89,7 +89,7 @@ func TestServerRestartKeepsSeatAndJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readType(t, conn, "event")
+	readType(t, conn, "apply_action")
 	conn.CloseNow()
 	firstServer.Close()
 
@@ -118,7 +118,7 @@ func TestDiagnosticsAreAuthenticatedAndRedactGamePayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	readType(t, conn, "event")
+	readType(t, conn, "apply_action")
 
 	body, _ := json.Marshal(map[string]string{"playerId": credentials.PlayerID, "resumeToken": credentials.ResumeToken})
 	response, err := http.Post(httpServer.URL+"/v1/rooms/"+credentials.RoomID+"/diagnostics", "application/json", bytes.NewReader(body))

@@ -15,9 +15,10 @@ import (
 )
 
 var (
-	ErrUnauthorized  = errors.New("invalid player or resume token")
-	ErrConflict      = errors.New("action expected sequence does not match")
-	ErrInvalidAction = errors.New("invalid action")
+	ErrUnauthorized   = errors.New("invalid player or resume token")
+	ErrConflict       = errors.New("action expected sequence does not match")
+	ErrInvalidAction  = errors.New("invalid action")
+	ErrPrefixMismatch = errors.New("action prefix hash diverges")
 )
 
 type Subscriber struct {
@@ -43,6 +44,7 @@ type Metrics struct {
 	Accepted        uint64 `json:"accepted"`
 	Duplicates      uint64 `json:"duplicates"`
 	Conflicts       uint64 `json:"conflicts"`
+	Divergences     uint64 `json:"divergences"`
 	ResumeRequests  uint64 `json:"resumeRequests"`
 	SlowDisconnects uint64 `json:"slowDisconnects"`
 }
@@ -59,8 +61,14 @@ type Diagnostics struct {
 
 func NewRoom(fs *store.FileStore, meta store.Metadata, events []protocol.Event) *Room {
 	byAction := make(map[string]protocol.Event, len(events))
-	for _, event := range events {
-		byAction[event.ActionID] = event
+	previousPrefix := "0000000000000000000000000000000000000000000000000000000000000000"
+	for index := range events {
+		event := &events[index]
+		if event.PrefixHash == "" {
+			event.PrefixHash = store.HashPrefix(previousPrefix, *event)
+		}
+		previousPrefix = event.PrefixHash
+		byAction[event.ActionID] = *event
 	}
 	return &Room{meta: meta, events: events, byAction: byAction, subs: make(map[uint64]chan protocol.ServerMessage), store: fs, clock: time.Now}
 }
@@ -127,13 +135,24 @@ func (r *Room) Authenticate(playerID, token string) bool {
 }
 
 func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, bool, error) {
+	commandID := action.CommandID
+	if commandID == "" {
+		commandID = action.ActionID
+	}
+	if action.Kind == "" {
+		action.Kind = "trusted_command"
+	}
+	command := action.Command
+	if len(command) == 0 {
+		command = action.Payload
+	}
 	r.mu.Lock()
 	player, ok := r.meta.Players[playerID]
 	if !ok {
 		r.mu.Unlock()
 		return protocol.Event{}, false, ErrUnauthorized
 	}
-	if old, ok := r.byAction[action.ActionID]; ok {
+	if old, ok := r.byAction[commandID]; ok {
 		r.metrics.Duplicates++
 		r.mu.Unlock()
 		if old.PlayerID != playerID {
@@ -141,11 +160,11 @@ func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, b
 		}
 		return old, true, nil
 	}
-	if !store.ValidateID(action.ActionID) || action.Kind != "trusted_command" || action.ActorIndex != player.Index || len(action.Payload) > 256*1024 {
+	if !store.ValidateID(commandID) || action.Kind != "trusted_command" || action.ActorIndex != player.Index || len(command) > 256*1024 {
 		r.mu.Unlock()
 		return protocol.Event{}, false, ErrInvalidAction
 	}
-	if len(action.Payload) > 0 && !json.Valid(action.Payload) {
+	if len(command) > 0 && !json.Valid(command) {
 		r.mu.Unlock()
 		return protocol.Event{}, false, ErrInvalidAction
 	}
@@ -156,11 +175,22 @@ func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, b
 		return protocol.Event{}, false, ErrConflict
 	}
 	previous := ""
+	previousPrefix := "0000000000000000000000000000000000000000000000000000000000000000"
 	if current > 0 {
 		previous = r.events[current-1].Hash
+		previousPrefix = r.events[current-1].PrefixHash
+		if previousPrefix == "" {
+			previousPrefix = previous
+		}
 	}
-	event := protocol.Event{Seq: current + 1, ActionID: action.ActionID, PlayerID: playerID, Kind: action.Kind,
-		ActorIndex: player.Index, Payload: append(json.RawMessage(nil), action.Payload...), AcceptedAt: r.clock().UTC(), PrevHash: previous}
+	if action.PrefixHash != "" && action.PrefixHash != previousPrefix {
+		r.metrics.Divergences++
+		r.mu.Unlock()
+		return protocol.Event{}, false, ErrPrefixMismatch
+	}
+	event := protocol.Event{Seq: current + 1, ActionID: commandID, CommandID: commandID, PlayerID: playerID, Kind: action.Kind,
+		ActorIndex: player.Index, Payload: append(json.RawMessage(nil), command...), AcceptedAt: r.clock().UTC(), PrevHash: previous}
+	event.PrefixHash = store.HashPrefix(previousPrefix, event)
 	event.Hash = store.HashEvent(event)
 	if err := r.store.Append(r.meta.RoomID, event); err != nil {
 		r.mu.Unlock()
@@ -168,8 +198,8 @@ func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, b
 	}
 	r.events = append(r.events, event)
 	r.metrics.Accepted++
-	r.byAction[action.ActionID] = event
-	message := protocol.ServerMessage{Type: "event", CurrentSeq: event.Seq, Event: &event}
+	r.byAction[commandID] = event
+	message := protocol.ServerMessage{Type: "apply_action", CurrentSeq: event.Seq, Event: &event}
 	for id, sub := range r.subs {
 		select {
 		case sub <- message:

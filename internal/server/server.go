@@ -217,8 +217,8 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case message := <-incoming:
-			if message.Type != "action" || message.Action == nil {
-				sendProblem(ctx, conn, "bad_message", "expected an action message")
+			if (message.Type != "action" && message.Type != "trusted_command") || message.Action == nil {
+				sendProblem(ctx, conn, "bad_message", "expected a trusted_command message")
 				continue
 			}
 			event, duplicate, applyErr := room.Apply(hello.PlayerID, *message.Action)
@@ -230,11 +230,16 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 				if errors.Is(applyErr, session.ErrInvalidAction) {
 					code = "invalid_action"
 				}
+				if errors.Is(applyErr, session.ErrPrefixMismatch) {
+					events, current, _ := room.Replay(0)
+					_ = writeMessage(ctx, conn, protocol.ServerMessage{Type: "state_resync", CurrentSeq: current, Events: events, Divergence: true, Code: "prefix_mismatch", Message: applyErr.Error()})
+					continue
+				}
 				sendProblem(ctx, conn, code, applyErr.Error())
 				continue
 			}
 			if duplicate {
-				_ = writeMessage(ctx, conn, protocol.ServerMessage{Type: "action_ack", CurrentSeq: event.Seq, Event: &event, Duplicate: true})
+				_ = writeMessage(ctx, conn, protocol.ServerMessage{Type: "trusted_command_ack", CurrentSeq: event.Seq, Event: &event, Duplicate: true})
 			}
 		}
 	}

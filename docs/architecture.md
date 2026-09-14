@@ -67,3 +67,12 @@ devuelve sólo metadatos: secuencia, conexiones, conflictos, duplicados,
 reconexiones, clientes lentos, hashes y veinte eventos sin payload. El cliente
 web combina eso con su cursor, visibilidad de pestaña y estado del socket.
 Nunca incluye el resume token ni comandos que puedan revelar cartas ocultas.
+
+## Sobre IronSmith
+
+El adaptador conserva el sobre real: `trusted_command` entra con `commandId`,
+`seq` informativa, `actorIndex`, `command` opaco y `prefixHash`; la sala emite
+`apply_action` con el `seq` autoritativo, el mismo `commandId` y su prefijo.
+Go sólo valida, ordena, deduplica, persiste y reproduce. Un prefijo divergente
+produce `state_resync` con el transcript; el motor Rust/WASM debe decidir cómo
+reconstruir el estado del juego.

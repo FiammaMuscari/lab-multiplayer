@@ -37,9 +37,16 @@
       <dl>
         <div><dt>Sala</dt><dd id="room">—</dd></div>
         <div><dt>Jugador</dt><dd id="player">—</dd></div>
+        <div><dt>actorIndex</dt><dd id="actor">—</dd></div>
+        <div><dt>seq local/servidor</dt><dd id="sequence">0 / 0</dd></div>
+        <div><dt>prefixHash</dt><dd id="prefix">—</dd></div>
+        <div><dt>reconnects</dt><dd id="reconnects">0</dd></div>
+        <div><dt>duplicates/conflicts/divergences</dt><dd id="metrics">0 / 0 / 0</dd></div>
       </dl>
       <div class="actions">
-        <button id="action" disabled>Enviar “pass priority”</button>
+        <button id="action" disabled>Enviar trusted_command</button>
+        <button id="burst" disabled>Burst x10</button>
+        <button id="duplicate" disabled>Duplicate last command</button>
         <button id="disconnect" class="secondary" disabled>Cortar conexión</button>
         <button id="reconnect" class="secondary" disabled>Reconectar</button>
 		<button id="diagnostics" class="secondary" disabled>Diagnóstico en un clic</button>
