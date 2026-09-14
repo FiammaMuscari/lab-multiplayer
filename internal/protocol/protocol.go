@@ -10,12 +10,14 @@ const Version = 1
 type Credentials struct {
 	RoomID      string `json:"roomId"`
 	PlayerID    string `json:"playerId"`
+	PlayerIndex int    `json:"playerIndex"`
 	ResumeToken string `json:"resumeToken"`
 }
 
 type Action struct {
 	ActionID    string          `json:"actionId"`
 	ExpectedSeq uint64          `json:"expectedSeq"`
+	ActorIndex  int             `json:"actorIndex"`
 	Kind        string          `json:"kind"`
 	Payload     json.RawMessage `json:"payload,omitempty"`
 }
@@ -24,6 +26,7 @@ type Event struct {
 	Seq        uint64          `json:"seq"`
 	ActionID   string          `json:"actionId"`
 	PlayerID   string          `json:"playerId"`
+	ActorIndex int             `json:"actorIndex"`
 	Kind       string          `json:"kind"`
 	Payload    json.RawMessage `json:"payload,omitempty"`
 	AcceptedAt time.Time       `json:"acceptedAt"`

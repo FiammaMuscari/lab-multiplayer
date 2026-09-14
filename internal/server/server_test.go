@@ -28,7 +28,7 @@ func TestWebSocketResumeAndReplay(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	action := protocol.ClientMessage{Type: "action", Action: &protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, Kind: "pass_priority"}}
+	action := protocol.ClientMessage{Type: "action", Action: &protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, ActorIndex: guest.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"priority_action","action_ref":{"kind":"pass_priority"}}`)}}
 	if err := wsjson.Write(ctx, guestConn, action); err != nil {
 		t.Fatal(err)
 	}
@@ -50,6 +50,33 @@ func TestWebSocketResumeAndReplay(t *testing.T) {
 	hostConn.CloseNow()
 }
 
+func TestServesBetaClientAndVersionedHealth(t *testing.T) {
+	httpServer := httptest.NewServer(New(t.TempDir(), nil, nil).Handler())
+	defer httpServer.Close()
+	for _, path := range []string{"/", "/static/app.js", "/static/style.css"} {
+		response, err := http.Get(httpServer.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, response.StatusCode)
+		}
+	}
+	response, err := http.Get(httpServer.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var health map[string]any
+	if err = json.NewDecoder(response.Body).Decode(&health); err != nil {
+		t.Fatal(err)
+	}
+	if health["version"] != Version {
+		t.Fatalf("health version = %#v", health["version"])
+	}
+}
+
 func TestServerRestartKeepsSeatAndJournal(t *testing.T) {
 	dataDir := t.TempDir()
 	firstServer := httptest.NewServer(New(dataDir, nil, nil).Handler())
@@ -57,7 +84,7 @@ func TestServerRestartKeepsSeatAndJournal(t *testing.T) {
 	conn := connect(t, firstServer.URL, credentials, 0)
 	readType(t, conn, "resumed")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	err := wsjson.Write(ctx, conn, protocol.ClientMessage{Type: "action", Action: &protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, Kind: "start_turn"}})
+	err := wsjson.Write(ctx, conn, protocol.ClientMessage{Type: "action", Action: &protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, ActorIndex: credentials.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"start_turn"}`)}})
 	cancel()
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +101,47 @@ func TestServerRestartKeepsSeatAndJournal(t *testing.T) {
 		t.Fatalf("restart lost durable state: %#v", message)
 	}
 	resumed.CloseNow()
+}
+
+func TestDiagnosticsAreAuthenticatedAndRedactGamePayload(t *testing.T) {
+	httpServer := httptest.NewServer(New(t.TempDir(), nil, nil).Handler())
+	defer httpServer.Close()
+	credentials := createCredentials(t, httpServer.URL+"/v1/rooms", "player")
+	conn := connect(t, httpServer.URL, credentials, 0)
+	readType(t, conn, "resumed")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err := wsjson.Write(ctx, conn, protocol.ClientMessage{Type: "action", Action: &protocol.Action{
+		ActionID: "action-0001", ExpectedSeq: 0, ActorIndex: credentials.PlayerIndex, Kind: "trusted_command",
+		Payload: json.RawMessage(`{"type":"select_object","hiddenCard":"must-not-leak"}`),
+	}})
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	readType(t, conn, "event")
+
+	body, _ := json.Marshal(map[string]string{"playerId": credentials.PlayerID, "resumeToken": credentials.ResumeToken})
+	response, err := http.Post(httpServer.URL+"/v1/rooms/"+credentials.RoomID+"/diagnostics", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("diagnostics status = %d", response.StatusCode)
+	}
+	var diagnostic struct {
+		Room struct {
+			CurrentSeq   uint64           `json:"currentSeq"`
+			RecentEvents []protocol.Event `json:"recentEvents"`
+		} `json:"room"`
+	}
+	if err = json.NewDecoder(response.Body).Decode(&diagnostic); err != nil {
+		t.Fatal(err)
+	}
+	if diagnostic.Room.CurrentSeq != 1 || len(diagnostic.Room.RecentEvents) != 1 || len(diagnostic.Room.RecentEvents[0].Payload) != 0 {
+		t.Fatalf("diagnostic leaked or lost data: %#v", diagnostic)
+	}
+	conn.CloseNow()
 }
 
 func createCredentials(t *testing.T, url, name string) protocol.Credentials {

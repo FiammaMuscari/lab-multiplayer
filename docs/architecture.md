@@ -28,6 +28,10 @@ su propio lector y escritor. Los subscribers tienen un buffer fijo; llenarlo
 elimina sólo a ese subscriber. Esto elimina el patrón donde un peer en resync
 mantiene una barrera global sobre las acciones de los demás.
 
+El replay y la suscripción en vivo se toman dentro de la misma sección crítica.
+Esto evita la carrera sutil donde una acción podía caer exactamente entre ambos
+pasos y dejar al cliente esperando para siempre.
+
 ## Durabilidad
 
 Cada sala contiene:
@@ -55,3 +59,11 @@ navegador.
 
 Es intencional: este repo valida primero que la sesión sobreviva a sockets,
 pestañas y al navegador creador sin mezclar todavía reglas de Magic.
+
+## Diagnóstico de un clic
+
+`POST /v1/rooms/{roomId}/diagnostics` exige las credenciales del asiento y
+devuelve sólo metadatos: secuencia, conexiones, conflictos, duplicados,
+reconexiones, clientes lentos, hashes y veinte eventos sin payload. El cliente
+web combina eso con su cursor, visibilidad de pestaña y estado del socket.
+Nunca incluye el resume token ni comandos que puedan revelar cartas ocultas.

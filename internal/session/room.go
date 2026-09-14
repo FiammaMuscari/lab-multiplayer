@@ -36,6 +36,25 @@ type Room struct {
 	nextSub  uint64
 	store    *store.FileStore
 	clock    func() time.Time
+	metrics  Metrics
+}
+
+type Metrics struct {
+	Accepted        uint64 `json:"accepted"`
+	Duplicates      uint64 `json:"duplicates"`
+	Conflicts       uint64 `json:"conflicts"`
+	ResumeRequests  uint64 `json:"resumeRequests"`
+	SlowDisconnects uint64 `json:"slowDisconnects"`
+}
+
+type Diagnostics struct {
+	RoomID            string           `json:"roomId"`
+	CurrentSeq        uint64           `json:"currentSeq"`
+	PlayerCount       int              `json:"playerCount"`
+	ActiveConnections int              `json:"activeConnections"`
+	LastHash          string           `json:"lastHash,omitempty"`
+	Metrics           Metrics          `json:"metrics"`
+	RecentEvents      []protocol.Event `json:"recentEvents"`
 }
 
 func NewRoom(fs *store.FileStore, meta store.Metadata, events []protocol.Event) *Room {
@@ -60,12 +79,12 @@ func Create(fs *store.FileStore, name string) (*Room, protocol.Credentials, erro
 		return nil, protocol.Credentials{}, err
 	}
 	meta := store.Metadata{Version: 1, RoomID: roomID, Players: map[string]store.PlayerRecord{
-		playerID: {ID: playerID, Name: cleanName(name), TokenHash: store.HashToken(token)},
+		playerID: {ID: playerID, Name: cleanName(name), Index: 0, TokenHash: store.HashToken(token)},
 	}}
 	if err = fs.Create(meta); err != nil {
 		return nil, protocol.Credentials{}, err
 	}
-	return NewRoom(fs, meta, nil), protocol.Credentials{RoomID: roomID, PlayerID: playerID, ResumeToken: token}, nil
+	return NewRoom(fs, meta, nil), protocol.Credentials{RoomID: roomID, PlayerID: playerID, PlayerIndex: 0, ResumeToken: token}, nil
 }
 
 func Load(fs *store.FileStore, roomID string) (*Room, error) {
@@ -90,12 +109,13 @@ func (r *Room) Join(name string) (protocol.Credentials, error) {
 	if err != nil {
 		return protocol.Credentials{}, err
 	}
-	r.meta.Players[playerID] = store.PlayerRecord{ID: playerID, Name: cleanName(name), TokenHash: store.HashToken(token)}
+	playerIndex := len(r.meta.Players)
+	r.meta.Players[playerID] = store.PlayerRecord{ID: playerID, Name: cleanName(name), Index: playerIndex, TokenHash: store.HashToken(token)}
 	if err = r.store.SaveMetadata(r.meta); err != nil {
 		delete(r.meta.Players, playerID)
 		return protocol.Credentials{}, err
 	}
-	return protocol.Credentials{RoomID: r.meta.RoomID, PlayerID: playerID, ResumeToken: token}, nil
+	return protocol.Credentials{RoomID: r.meta.RoomID, PlayerID: playerID, PlayerIndex: playerIndex, ResumeToken: token}, nil
 }
 
 func (r *Room) Authenticate(playerID, token string) bool {
@@ -108,18 +128,20 @@ func (r *Room) Authenticate(playerID, token string) bool {
 
 func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, bool, error) {
 	r.mu.Lock()
-	if _, ok := r.meta.Players[playerID]; !ok {
+	player, ok := r.meta.Players[playerID]
+	if !ok {
 		r.mu.Unlock()
 		return protocol.Event{}, false, ErrUnauthorized
 	}
 	if old, ok := r.byAction[action.ActionID]; ok {
+		r.metrics.Duplicates++
 		r.mu.Unlock()
 		if old.PlayerID != playerID {
 			return protocol.Event{}, false, ErrInvalidAction
 		}
 		return old, true, nil
 	}
-	if !store.ValidateID(action.ActionID) || len(action.Kind) < 1 || len(action.Kind) > 64 || len(action.Payload) > 256*1024 {
+	if !store.ValidateID(action.ActionID) || action.Kind != "trusted_command" || action.ActorIndex != player.Index || len(action.Payload) > 256*1024 {
 		r.mu.Unlock()
 		return protocol.Event{}, false, ErrInvalidAction
 	}
@@ -129,6 +151,7 @@ func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, b
 	}
 	current := uint64(len(r.events))
 	if action.ExpectedSeq != current {
+		r.metrics.Conflicts++
 		r.mu.Unlock()
 		return protocol.Event{}, false, ErrConflict
 	}
@@ -137,13 +160,14 @@ func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, b
 		previous = r.events[current-1].Hash
 	}
 	event := protocol.Event{Seq: current + 1, ActionID: action.ActionID, PlayerID: playerID, Kind: action.Kind,
-		Payload: append(json.RawMessage(nil), action.Payload...), AcceptedAt: r.clock().UTC(), PrevHash: previous}
+		ActorIndex: player.Index, Payload: append(json.RawMessage(nil), action.Payload...), AcceptedAt: r.clock().UTC(), PrevHash: previous}
 	event.Hash = store.HashEvent(event)
 	if err := r.store.Append(r.meta.RoomID, event); err != nil {
 		r.mu.Unlock()
 		return protocol.Event{}, false, err
 	}
 	r.events = append(r.events, event)
+	r.metrics.Accepted++
 	r.byAction[action.ActionID] = event
 	message := protocol.ServerMessage{Type: "event", CurrentSeq: event.Seq, Event: &event}
 	for id, sub := range r.subs {
@@ -152,6 +176,7 @@ func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, b
 		default:
 			close(sub)
 			delete(r.subs, id)
+			r.metrics.SlowDisconnects++
 		}
 	}
 	r.mu.Unlock()
@@ -183,8 +208,10 @@ func (r *Room) SubscribeFrom(after uint64, buffer int) (Subscriber, []protocol.E
 	defer r.mu.Unlock()
 	current := uint64(len(r.events))
 	if after > current {
+		r.metrics.Conflicts++
 		return Subscriber{}, nil, current, ErrConflict
 	}
+	r.metrics.ResumeRequests++
 	subscriber := r.subscribeLocked(buffer)
 	events := append([]protocol.Event(nil), r.events[after:]...)
 	return subscriber, events, current, nil
@@ -212,6 +239,27 @@ func (r *Room) subscribeLocked(buffer int) Subscriber {
 }
 
 func (r *Room) ID() string { return r.meta.RoomID }
+
+func (r *Room) Diagnostics() Diagnostics {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	start := len(r.events) - 20
+	if start < 0 {
+		start = 0
+	}
+	recent := append([]protocol.Event(nil), r.events[start:]...)
+	// Commands can contain hidden game information. Event metadata is enough to
+	// diagnose ordering and reconnect failures, so diagnostics redact payloads.
+	for index := range recent {
+		recent[index].Payload = nil
+	}
+	lastHash := ""
+	if len(r.events) > 0 {
+		lastHash = r.events[len(r.events)-1].Hash
+	}
+	return Diagnostics{RoomID: r.meta.RoomID, CurrentSeq: uint64(len(r.events)), PlayerCount: len(r.meta.Players),
+		ActiveConnections: len(r.subs), LastHash: lastHash, Metrics: r.metrics, RecentEvents: recent}
+}
 
 func randomID(prefix string, bytes int) (string, error) {
 	value, err := randomHex(bytes)

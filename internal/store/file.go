@@ -22,6 +22,7 @@ var ErrNotFound = errors.New("room not found")
 type PlayerRecord struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
+	Index     int    `json:"index"`
 	TokenHash string `json:"tokenHash"`
 }
 
@@ -169,11 +170,12 @@ func HashEvent(event protocol.Event) string {
 		Seq        uint64          `json:"seq"`
 		ActionID   string          `json:"actionId"`
 		PlayerID   string          `json:"playerId"`
+		ActorIndex int             `json:"actorIndex"`
 		Kind       string          `json:"kind"`
 		Payload    json.RawMessage `json:"payload,omitempty"`
 		AcceptedAt string          `json:"acceptedAt"`
 		PrevHash   string          `json:"prevHash"`
-	}{event.Seq, event.ActionID, event.PlayerID, event.Kind, event.Payload, event.AcceptedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), event.PrevHash}
+	}{event.Seq, event.ActionID, event.PlayerID, event.ActorIndex, event.Kind, event.Payload, event.AcceptedAt.UTC().Format("2006-01-02T15:04:05.000000000Z07:00"), event.PrevHash}
 	data, _ := json.Marshal(canonical)
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])

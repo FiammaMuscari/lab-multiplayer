@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,11 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
+
+//go:embed static/*
+var staticFiles embed.FS
+
+const Version = "0.1.0-beta.1"
 
 type Server struct {
 	store          *store.FileStore
@@ -35,10 +41,27 @@ func New(dataDir string, logger *slog.Logger, allowedOrigins []string) *Server {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, http.StatusOK, map[string]any{"ok": true}) })
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "version": Version})
+	})
 	mux.HandleFunc("POST /v1/rooms", s.createRoom)
 	mux.HandleFunc("POST /v1/rooms/{room}/players", s.joinRoom)
+	mux.HandleFunc("POST /v1/rooms/{room}/diagnostics", s.roomDiagnostics)
 	mux.HandleFunc("GET /v1/ws", s.websocket)
+	mux.Handle("GET /static/", http.FileServer(http.FS(staticFiles)))
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := staticFiles.ReadFile("static/index.html")
+		if err != nil {
+			http.Error(w, "client unavailable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(data)
+	})
 	return requestLimits(mux)
 }
 
@@ -78,6 +101,26 @@ func (s *Server) joinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, credentials)
+}
+
+func (s *Server) roomDiagnostics(w http.ResponseWriter, r *http.Request) {
+	room, err := s.room(r.PathValue("room"))
+	if err != nil {
+		problem(w, http.StatusNotFound, "room_not_found", "room does not exist")
+		return
+	}
+	var body struct {
+		PlayerID    string `json:"playerId"`
+		ResumeToken string `json:"resumeToken"`
+	}
+	if err = decodeBody(w, r, &body); err != nil {
+		return
+	}
+	if !room.Authenticate(body.PlayerID, body.ResumeToken) {
+		problem(w, http.StatusUnauthorized, "unauthorized", "invalid player or resume token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": Version, "serverTime": time.Now().UTC(), "room": room.Diagnostics()})
 }
 
 func (s *Server) room(id string) (*session.Room, error) {

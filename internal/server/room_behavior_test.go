@@ -23,7 +23,7 @@ func TestReconnectIdempotencyAndNoHostDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, Kind: "pass_priority", Payload: json.RawMessage(`{"seat":0}`)}
+	first := protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, ActorIndex: host.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"priority_action","action_ref":{"kind":"pass_priority"}}`)}
 	event, duplicate, err := room.Apply(host.PlayerID, first)
 	if err != nil || duplicate || event.Seq != 1 {
 		t.Fatalf("first apply = %#v, %v, %v", event, duplicate, err)
@@ -31,7 +31,7 @@ func TestReconnectIdempotencyAndNoHostDependency(t *testing.T) {
 
 	// The creator/old browser host can be gone. The guest still advances the
 	// durable sequence because authority belongs to the room, not a socket.
-	second := protocol.Action{ActionID: "action-0002", ExpectedSeq: 1, Kind: "pass_priority"}
+	second := protocol.Action{ActionID: "action-0002", ExpectedSeq: 1, ActorIndex: guest.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"priority_action","action_ref":{"kind":"pass_priority"}}`)}
 	event, duplicate, err = room.Apply(guest.PlayerID, second)
 	if err != nil || duplicate || event.Seq != 2 {
 		t.Fatalf("guest apply = %#v, %v, %v", event, duplicate, err)
@@ -54,11 +54,11 @@ func TestRejectsStaleSequenceAndSurvivesReload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, Kind: "draw"})
+	_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, ActorIndex: credentials.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"draw"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: "action-0002", ExpectedSeq: 0, Kind: "draw"})
+	_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: "action-0002", ExpectedSeq: 0, ActorIndex: credentials.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"draw"}`)})
 	if !errors.Is(err, session.ErrConflict) {
 		t.Fatalf("expected conflict, got %v", err)
 	}
@@ -85,7 +85,7 @@ func TestSlowSubscriberDoesNotBlockRoom(t *testing.T) {
 	slow := room.Subscribe(1)
 	defer slow.Close()
 	for index := 0; index < 3; index++ {
-		_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: fmt.Sprintf("action-%04d", index+1), ExpectedSeq: uint64(index), Kind: "pass"})
+		_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: fmt.Sprintf("action-%04d", index+1), ExpectedSeq: uint64(index), ActorIndex: credentials.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"pass_priority"}`)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,7 +106,7 @@ func TestSubscribeFromClosesReplayToLiveGap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, Kind: "pass"})
+	_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: "action-0001", ExpectedSeq: 0, ActorIndex: credentials.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"pass_priority"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestSubscribeFromClosesReplayToLiveGap(t *testing.T) {
 	if current != 1 || len(replay) != 1 {
 		t.Fatalf("unexpected atomic replay: current=%d events=%d", current, len(replay))
 	}
-	_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: "action-0002", ExpectedSeq: 1, Kind: "pass"})
+	_, _, err = room.Apply(credentials.PlayerID, protocol.Action{ActionID: "action-0002", ExpectedSeq: 1, ActorIndex: credentials.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"pass_priority"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestConcurrentActionsChooseOneSequenceOwner(t *testing.T) {
 		go func(index int, player protocol.Credentials) {
 			defer group.Done()
 			<-start
-			_, _, applyErr := room.Apply(player.PlayerID, protocol.Action{ActionID: fmt.Sprintf("action-%04d", index+1), ExpectedSeq: 0, Kind: "pass"})
+			_, _, applyErr := room.Apply(player.PlayerID, protocol.Action{ActionID: fmt.Sprintf("action-%04d", index+1), ExpectedSeq: 0, ActorIndex: player.PlayerIndex, Kind: "trusted_command", Payload: json.RawMessage(`{"type":"pass_priority"}`)})
 			results <- applyErr
 		}(index, player)
 	}

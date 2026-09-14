@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>IronSmith Multiplayer Lab</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">v0.1.0 beta</p>
+      <h1>Multiplayer resilience lab</h1>
+      <p>Probá continuidad de sala, reintentos idempotentes y recuperación por cursor sin depender del navegador creador.</p>
+    </header>
+
+    <section class="grid">
+      <form id="create-form" class="card">
+        <h2>Crear sala</h2>
+        <label>Nombre <input name="name" value="Host" maxlength="40" required></label>
+        <button>Crear y conectar</button>
+      </form>
+      <form id="join-form" class="card">
+        <h2>Entrar</h2>
+        <label>ID de sala <input name="room" placeholder="room-..." required></label>
+        <label>Nombre <input name="name" value="Guest" maxlength="40" required></label>
+        <button>Entrar y conectar</button>
+      </form>
+    </section>
+
+    <section class="card session">
+      <div class="status-row">
+        <span id="status-dot" class="dot offline"></span>
+        <strong id="status">Sin conexión</strong>
+        <span id="sequence">secuencia 0</span>
+      </div>
+      <dl>
+        <div><dt>Sala</dt><dd id="room">—</dd></div>
+        <div><dt>Jugador</dt><dd id="player">—</dd></div>
+      </dl>
+      <div class="actions">
+        <button id="action" disabled>Enviar “pass priority”</button>
+        <button id="disconnect" class="secondary" disabled>Cortar conexión</button>
+        <button id="reconnect" class="secondary" disabled>Reconectar</button>
+		<button id="diagnostics" class="secondary" disabled>Diagnóstico en un clic</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="log-title"><h2>Eventos</h2><button id="clear" class="text">Limpiar</button></div>
+      <ol id="log" class="log"></ol>
+    </section>
+  </main>
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>
