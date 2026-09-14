@@ -40,10 +40,10 @@ function LabTest-Disconnect($Socket) {
 }
 
 function LabTest-WaitHostOffline($Credentials) {
-  1..15 | ForEach-Object {
+  for ($attempt = 0; $attempt -lt 15; $attempt++) {
     try {
       $probe = Invoke-RestMethod "$BaseUrl/v1/rooms/$($Credentials.roomId)/diagnostics" -Method Post -ContentType "application/json" -Body (ConvertTo-Json @{ playerId = $Credentials.playerId; resumeToken = $Credentials.resumeToken })
-      if ($probe.room.activeConnections -le 1) { return }
+      if ($probe.room.activeConnections -le 1) { break }
     } catch { }
     Start-Sleep -Seconds 1
   }
