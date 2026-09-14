@@ -69,7 +69,7 @@ function LabTest-Run([int]$RunNumber) {
   $result = [ordered]@{
     mode = $Mode; run = $RunNumber; roomId = $room.roomId
     afterHostLoss = $afterLoss.type; errorCode = $afterLoss.code
-    serverSeqAfter = $afterLoss.currentSeq; replayCount = @($reconnected.Hello.events).Count
+    serverSeqAfter = $afterLoss.currentSeq; replayCount = @($reconnected.Hello.events | Where-Object { $null -ne $_ }).Count
     guestSeqBeforeLoss = $guestSecond.event.seq; guestPrefixHash = $guestSecond.event.prefixHash
     diagnosticsSeq = $diagnostic.room.currentSeq; conflicts = $diagnostic.room.metrics.conflicts
   }
