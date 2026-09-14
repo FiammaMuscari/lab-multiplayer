@@ -67,3 +67,36 @@ promotion; trusted command acceptance and host-directed resync have no
 alternate endpoint. `host_unavailable` is the resulting symptom, not the
 cause. This explains the observed sequence remaining at 2 without asserting
 that the lab's baseline policy is a complete port of the game engine.
+
+## Experimental mitigation
+
+### Design
+
+**Current:** LAB stores the room journal, authoritative sequence, command ID
+index, and prefix chain in the server-side room. Player sockets only register
+active connections and subscriptions. BASELINE adds the creator-online gate
+solely as a comparison control.
+
+**Change:** no production behavior change is required. The missing piece was a
+single regression that runs the same creator-disconnect scenario through both
+profiles and checks guest progress plus creator replay.
+
+**Why it addresses FAIL-001:** LAB's authority is the room journal, not the
+creator socket. After the creator is closed, the guest can allocate the next
+server sequence; reopening the creator's identity replays the missing suffix.
+
+**What it does not solve:** this does not implement host migration,
+distributed elections, or a port of IronSmith's game rules. It only validates
+the lab's minimal authority/socket separation.
+
+**Risks and invariants:** one room lock still serializes sequence assignment;
+sequence values remain monotonic; command IDs remain idempotent; clients cannot
+choose the authoritative sequence; player identity uses the resume credential;
+creator loss leaves the room journal intact; and BASELINE retains its failure.
+
+### Regression evidence
+
+- BASELINE: creator closes after sequence 2; guest receives
+  `ErrHostUnavailable`; sequence remains 2.
+- LAB: creator closes after sequence 2; guest commits sequence 3; creator
+  reopens and replays exactly one event with the same prefix hash.

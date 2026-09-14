@@ -48,6 +48,60 @@ func TestReconnectIdempotencyAndNoHostDependency(t *testing.T) {
 	}
 }
 
+func TestCreatorDisconnectProfilesRemainComparable(t *testing.T) {
+	for _, mode := range []string{"baseline", "lab"} {
+		t.Run(mode, func(t *testing.T) {
+			fs := store.NewFileStore(t.TempDir())
+			room, host, err := session.Create(fs, "host")
+			if err != nil {
+				t.Fatal(err)
+			}
+			guest, err := room.Join("guest")
+			if err != nil {
+				t.Fatal(err)
+			}
+			room.OpenPlayer(host.PlayerID)
+			room.OpenPlayer(guest.PlayerID)
+			defer room.ClosePlayer(guest.PlayerID)
+
+			apply := func(player protocol.Credentials, id string, expected uint64) (protocol.Event, error) {
+				event, _, applyErr := room.ApplyMode(player.PlayerID, protocol.Action{
+					CommandID: id, ExpectedSeq: expected, ActorIndex: player.PlayerIndex,
+					Kind: "trusted_command", Command: json.RawMessage(`{"type":"priority_action"}`),
+				}, mode)
+				return event, applyErr
+			}
+
+			if _, err = apply(host, mode+"-1", 0); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = apply(guest, mode+"-2", 1); err != nil {
+				t.Fatal(err)
+			}
+			room.ClosePlayer(host.PlayerID)
+			third, err := apply(guest, mode+"-3", 2)
+			if mode == "baseline" {
+				if !errors.Is(err, session.ErrHostUnavailable) {
+					t.Fatalf("baseline after creator disconnect = %v", err)
+				}
+				if _, current, replayErr := room.Replay(2); replayErr != nil || current != 2 {
+					t.Fatalf("baseline sequence advanced: current=%d err=%v", current, replayErr)
+				}
+				return
+			}
+			if err != nil || third.Seq != 3 {
+				t.Fatalf("lab guest progress = %#v err=%v", third, err)
+			}
+
+			room.OpenPlayer(host.PlayerID)
+			tail, current, replayErr := room.Replay(2)
+			if replayErr != nil || current != 3 || len(tail) != 1 || tail[0].Seq != 3 || tail[0].PrefixHash != third.PrefixHash {
+				t.Fatalf("lab creator recovery = tail=%#v current=%d err=%v", tail, current, replayErr)
+			}
+		})
+	}
+}
+
 func TestRejectsStaleSequenceAndSurvivesReload(t *testing.T) {
 	fs := store.NewFileStore(t.TempDir())
 	room, credentials, err := session.Create(fs, "player")
