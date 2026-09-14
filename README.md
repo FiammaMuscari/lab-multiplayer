@@ -6,7 +6,7 @@ Public lab for testing and breaking the multiplayer system compatible with:
 
 ## Live demo
 
-Deploy URL pending hosting setup.
+[Open multiplayer lab](https://lab-multiplayer.onrender.com)
 
 ## What to test
 
