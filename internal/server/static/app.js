@@ -17,7 +17,7 @@ function readCredentials() {
 }
 
 function saveCredentials(value) {
-  credentials = value;
+  credentials = { ...value, mode: $("#mode").value };
   localStorage.setItem(storageKey, JSON.stringify(value));
   renderIdentity();
 }
@@ -36,6 +36,7 @@ function renderIdentity() {
   $("#player").textContent = credentials?.playerId || "—";
   $("#actor").textContent = credentials?.playerIndex ?? "—";
   $("#join-form [name=room]").value = credentials?.roomId || "";
+  $("#mode").value = credentials?.mode || "lab";
 }
 
 function setStatus(text, kind = "offline") {
@@ -82,7 +83,7 @@ function connect() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(`${scheme}//${location.host}/v1/ws`);
   socket = ws;
-  ws.onopen = () => ws.send(JSON.stringify({ type: "resume", protocol: 1, ...credentials, afterSeq: sequence }));
+  ws.onopen = () => ws.send(JSON.stringify({ type: "resume", protocol: 1, ...credentials, afterSeq: sequence, mode: credentials.mode || "lab" }));
   ws.onmessage = ({ data }) => {
     const message = JSON.parse(data);
     if (message.type === "error") { log(`${message.code}: ${message.message}`, true); return; }
@@ -90,7 +91,7 @@ function connect() {
       serverSequence = Number(message.currentSeq || sequence); renderMetrics();
       for (const event of message.events || []) applyEvent(event);
       reconnectAttempt = 0;
-      setStatus("Conectado", "online");
+      setStatus(`Conectado · ${message.mode || credentials.mode || "lab"}`, "online");
       log(`sesión reanudada; ${message.events?.length || 0} eventos recuperados`);
       return;
     }
@@ -143,6 +144,10 @@ $("#create-form").addEventListener("submit", async event => {
     log(`sala creada: ${credentials.roomId}`);
     connect();
   } catch (error) { log(error.message, true); }
+});
+
+$("#mode").addEventListener("change", () => {
+  if (credentials) { credentials.mode = $("#mode").value; localStorage.setItem(storageKey, JSON.stringify(credentials)); }
 });
 
 $("#join-form").addEventListener("submit", async event => {

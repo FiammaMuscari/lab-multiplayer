@@ -34,3 +34,27 @@ func TestTrustedCommandAdapterPreservesMetadataAndDetectsPrefixDivergence(t *tes
 		t.Fatalf("prefix mismatch err = %v", err)
 	}
 }
+
+func TestBaselineProfileRetainsHostDependency(t *testing.T) {
+	room, host, err := session.Create(store.NewFileStore(t.TempDir()), "host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest, err := room.Join("guest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	room.OpenPlayer(host.PlayerID)
+	room.OpenPlayer(guest.PlayerID)
+	defer room.ClosePlayer(guest.PlayerID)
+	defer room.ClosePlayer(host.PlayerID)
+	_, _, err = room.ApplyMode(guest.PlayerID, protocol.Action{CommandID: "baseline-1", ExpectedSeq: 0, ActorIndex: guest.PlayerIndex, Kind: "trusted_command", Command: json.RawMessage(`{"type":"test"}`)}, "baseline")
+	if err != nil {
+		t.Fatalf("guest should act while host is online: %v", err)
+	}
+	room.ClosePlayer(host.PlayerID)
+	_, _, err = room.ApplyMode(guest.PlayerID, protocol.Action{CommandID: "baseline-2", ExpectedSeq: 1, ActorIndex: guest.PlayerIndex, Kind: "trusted_command", Command: json.RawMessage(`{"type":"test"}`)}, "baseline")
+	if err != session.ErrHostUnavailable {
+		t.Fatalf("baseline host loss err = %v", err)
+	}
+}

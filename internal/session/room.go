@@ -15,10 +15,11 @@ import (
 )
 
 var (
-	ErrUnauthorized   = errors.New("invalid player or resume token")
-	ErrConflict       = errors.New("action expected sequence does not match")
-	ErrInvalidAction  = errors.New("invalid action")
-	ErrPrefixMismatch = errors.New("action prefix hash diverges")
+	ErrUnauthorized    = errors.New("invalid player or resume token")
+	ErrConflict        = errors.New("action expected sequence does not match")
+	ErrInvalidAction   = errors.New("invalid action")
+	ErrPrefixMismatch  = errors.New("action prefix hash diverges")
+	ErrHostUnavailable = errors.New("baseline host is disconnected")
 )
 
 type Subscriber struct {
@@ -38,6 +39,7 @@ type Room struct {
 	store    *store.FileStore
 	clock    func() time.Time
 	metrics  Metrics
+	active   map[string]int
 }
 
 type Metrics struct {
@@ -70,7 +72,34 @@ func NewRoom(fs *store.FileStore, meta store.Metadata, events []protocol.Event) 
 		previousPrefix = event.PrefixHash
 		byAction[event.ActionID] = *event
 	}
-	return &Room{meta: meta, events: events, byAction: byAction, subs: make(map[uint64]chan protocol.ServerMessage), store: fs, clock: time.Now}
+	return &Room{meta: meta, events: events, byAction: byAction, subs: make(map[uint64]chan protocol.ServerMessage), active: make(map[string]int), store: fs, clock: time.Now}
+}
+
+func (r *Room) OpenPlayer(playerID string) {
+	r.mu.Lock()
+	r.active[playerID]++
+	r.mu.Unlock()
+}
+
+func (r *Room) ClosePlayer(playerID string) {
+	r.mu.Lock()
+	if r.active[playerID] > 1 {
+		r.active[playerID]--
+	} else {
+		delete(r.active, playerID)
+	}
+	r.mu.Unlock()
+}
+
+func (r *Room) HostOnline() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, player := range r.meta.Players {
+		if player.Index == 0 {
+			return r.active[id] > 0
+		}
+	}
+	return false
 }
 
 func Create(fs *store.FileStore, name string) (*Room, protocol.Credentials, error) {
@@ -135,6 +164,15 @@ func (r *Room) Authenticate(playerID, token string) bool {
 }
 
 func (r *Room) Apply(playerID string, action protocol.Action) (protocol.Event, bool, error) {
+	return r.ApplyMode(playerID, action, "lab")
+}
+
+// ApplyMode keeps the experimental lab path intact while exposing the
+// host-gated behavior needed to reproduce the reference peer flow.
+func (r *Room) ApplyMode(playerID string, action protocol.Action, mode string) (protocol.Event, bool, error) {
+	if mode == "baseline" && action.ActorIndex != 0 && !r.HostOnline() {
+		return protocol.Event{}, false, ErrHostUnavailable
+	}
 	commandID := action.CommandID
 	if commandID == "" {
 		commandID = action.ActionID

@@ -76,3 +76,11 @@ El adaptador conserva el sobre real: `trusted_command` entra con `commandId`,
 Go sólo valida, ordena, deduplica, persiste y reproduce. Un prefijo divergente
 produce `state_resync` con el transcript; el motor Rust/WASM debe decidir cómo
 reconstruir el estado del juego.
+
+## Modos de comparación
+
+`LAB` conserva las garantías experimentales de sesión y recuperación. `BASELINE`
+exige que el creador (`actorIndex` 0) permanezca conectado para que otros
+actores apliquen comandos, reproduciendo la dependencia de host observada en
+el flujo peer. Ambos modos mantienen la secuencia autoritativa y el prefijo;
+las reglas del juego y el resync de estado siguen fuera de Go.

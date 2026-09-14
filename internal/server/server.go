@@ -157,11 +157,17 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 		closeProblem(conn, "bad_handshake", "first message must be a compatible resume request")
 		return
 	}
+	mode := hello.Mode
+	if mode != "baseline" {
+		mode = "lab"
+	}
 	room, err := s.room(hello.RoomID)
 	if err != nil || !room.Authenticate(hello.PlayerID, hello.ResumeToken) {
 		closeProblem(conn, "unauthorized", "invalid room, player, or resume token")
 		return
 	}
+	room.OpenPlayer(hello.PlayerID)
+	defer room.ClosePlayer(hello.PlayerID)
 	sub, events, current, err := room.SubscribeFrom(hello.AfterSeq, 64)
 	if err != nil {
 		closeProblem(conn, "invalid_cursor", "afterSeq is ahead of the room")
@@ -174,7 +180,7 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 	incoming := make(chan protocol.ClientMessage)
 	readErr := make(chan error, 1)
 	go func() {
-		if err := writeMessage(ctx, conn, protocol.ServerMessage{Type: "resumed", Protocol: protocol.Version, RoomID: room.ID(), PlayerID: hello.PlayerID, CurrentSeq: current, Events: events}); err != nil {
+		if err := writeMessage(ctx, conn, protocol.ServerMessage{Type: "resumed", Protocol: protocol.Version, RoomID: room.ID(), PlayerID: hello.PlayerID, Mode: mode, CurrentSeq: current, Events: events}); err != nil {
 			writeErr <- err
 			return
 		}
@@ -221,7 +227,7 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 				sendProblem(ctx, conn, "bad_message", "expected a trusted_command message")
 				continue
 			}
-			event, duplicate, applyErr := room.Apply(hello.PlayerID, *message.Action)
+			event, duplicate, applyErr := room.ApplyMode(hello.PlayerID, *message.Action, mode)
 			if applyErr != nil {
 				code := "action_failed"
 				if errors.Is(applyErr, session.ErrConflict) {
@@ -233,6 +239,10 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 				if errors.Is(applyErr, session.ErrPrefixMismatch) {
 					events, current, _ := room.Replay(0)
 					_ = writeMessage(ctx, conn, protocol.ServerMessage{Type: "state_resync", CurrentSeq: current, Events: events, Divergence: true, Code: "prefix_mismatch", Message: applyErr.Error()})
+					continue
+				}
+				if errors.Is(applyErr, session.ErrHostUnavailable) {
+					sendProblem(ctx, conn, "host_unavailable", applyErr.Error())
 					continue
 				}
 				sendProblem(ctx, conn, code, applyErr.Error())

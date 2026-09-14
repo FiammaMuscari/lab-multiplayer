@@ -47,6 +47,7 @@ type ClientMessage struct {
 	PlayerID    string  `json:"playerId,omitempty"`
 	ResumeToken string  `json:"resumeToken,omitempty"`
 	AfterSeq    uint64  `json:"afterSeq,omitempty"`
+	Mode        string  `json:"mode,omitempty"`
 	Action      *Action `json:"action,omitempty"`
 }
 
@@ -55,6 +56,7 @@ type ServerMessage struct {
 	Protocol   int     `json:"protocol,omitempty"`
 	RoomID     string  `json:"roomId,omitempty"`
 	PlayerID   string  `json:"playerId,omitempty"`
+	Mode       string  `json:"mode,omitempty"`
 	CurrentSeq uint64  `json:"currentSeq,omitempty"`
 	Events     []Event `json:"events,omitempty"`
 	Event      *Event  `json:"event,omitempty"`
