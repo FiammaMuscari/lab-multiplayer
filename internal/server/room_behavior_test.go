@@ -72,14 +72,14 @@ func TestCreatorDisconnectProfilesRemainComparable(t *testing.T) {
 				return event, applyErr
 			}
 
-			if _, err = apply(host, mode+"-1", 0); err != nil {
+			if _, err = apply(host, mode+"-action-1", 0); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = apply(guest, mode+"-2", 1); err != nil {
+			if _, err = apply(guest, mode+"-action-2", 1); err != nil {
 				t.Fatal(err)
 			}
 			room.ClosePlayer(host.PlayerID)
-			third, err := apply(guest, mode+"-3", 2)
+			third, err := apply(guest, mode+"-action-3", 2)
 			if mode == "baseline" {
 				if !errors.Is(err, session.ErrHostUnavailable) {
 					t.Fatalf("baseline after creator disconnect = %v", err)

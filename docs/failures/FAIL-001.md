@@ -96,6 +96,7 @@ creator loss leaves the room journal intact; and BASELINE retains its failure.
 
 ### Regression evidence
 
+- **AUTOMATED REGRESSION: PASS** (`baseline` and `lab` subtests).
 - BASELINE: creator closes after sequence 2; guest receives
   `ErrHostUnavailable`; sequence remains 2.
 - LAB: creator closes after sequence 2; guest commits sequence 3; creator
